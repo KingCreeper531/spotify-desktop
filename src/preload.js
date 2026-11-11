@@ -1,0 +1,351 @@
+// Spotify page cleanup: hides ads and Premium upsells, notices ads that still play (so the
+// app can mute them), reports what's playing for the taskbar buttons and notifications,
+// adds the sleep-timer moon button, plus the shared Ranch parts (settings gear, green
+// Update button, clean share links). The phone apps run this same script.
+const { ipcRenderer, contextBridge, webFrame } = require('electron');
+
+let cfg = ipcRenderer.sendSync('rw:get-config');
+const log = (m) => ipcRenderer.send('rw:log', m);
+const desktop = !!(webFrame && webFrame.executeJavaScript); // the phone apps' stand-in has no executeJavaScript
+
+// ------------------------------------------------------------ page world: clean copied links
+contextBridge.executeInMainWorld({
+  func: () => {
+    const clean = (text) => (typeof text !== 'string' || !window.__ranchCleanLinks ? text
+      : text.replace(/https?:\/\/open\.spotify\.com\/[^\s]*/g, (url) => {
+        try { const u = new URL(url); ['si', 'utm_source', 'utm_medium', 'utm_campaign', 'nd', 'context'].forEach((k) => u.searchParams.delete(k)); return u.toString(); } catch { return url; }
+      }));
+    window.__ranchCleanLinks = true;
+    if (window.Clipboard && Clipboard.prototype.writeText) {
+      const orig = Clipboard.prototype.writeText;
+      Clipboard.prototype.writeText = function writeText(t) { return orig.call(this, clean(t)); };
+    }
+    if (navigator.share) {
+      const share = navigator.share.bind(navigator);
+      navigator.share = (data) => share(data && data.url ? { ...data, url: clean(data.url) } : data);
+    }
+  },
+});
+function setCleanLinks(on) {
+  if (desktop) webFrame.executeJavaScript(`window.__ranchCleanLinks = ${on ? 'true' : 'false'}`).catch(() => {});
+}
+setCleanLinks(cfg.skipLinkTracking);
+
+// ------------------------------------------------------------ styles
+const SHEETS = {
+  blockAds: `
+    [data-testid="hpto-container"], [data-testid="home-hpto"], [data-testid="embedded-ad"],
+    [data-testid="leavebehind-advertiser"], [data-testid="leavebehind-container"],
+    [data-testid="ad-companion"], [data-testid="sponsored-recommendation"],
+    a[href^="https://adclick."], iframe[src*="doubleclick.net"] { display: none !important; }`,
+  hideUpsells: `
+    [data-testid="upgrade-button"], [data-testid="premium-upsell"], [data-testid="install-app-button"],
+    a[href*="spotify.com/premium"], a[href*="/premium?"], a[href$="/premium"], a[href*="spotify.com/download"],
+    a[href^="/download"], [data-testid="upsell-modal"], [data-testid="premium-modal"] { display: none !important; }`,
+};
+const BASE_CSS = `
+  .ranch-top-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; border: 0;
+    border-radius: 16px; cursor: pointer; font: 700 13px/1 "Spotify Mix", "Segoe UI", system-ui, sans-serif; flex: none;
+    position: fixed; top: 16px; z-index: 9999; }
+  #ranch-settings-btn, #ranch-sleep-btn { min-width: 32px; padding: 0 8px; background: #1f1f1f; color: #b3b3b3; }
+  #ranch-settings-btn:hover, #ranch-sleep-btn:hover { background: #2a2a2a; color: #fff; transform: scale(1.04); }
+  #ranch-sleep-btn.on { color: #1ed760; }
+  #ranch-update-btn { padding: 0 14px; background: #1ed760; color: #000; }
+  #ranch-update-btn:hover:not(:disabled) { background: #3be477; }
+  #ranch-sleep-menu { position: fixed; z-index: 10000; background: #282828; border-radius: 6px; padding: 4px; min-width: 180px;
+    box-shadow: 0 16px 24px rgba(0,0,0,.3), 0 6px 8px rgba(0,0,0,.2); font: 400 14px/1 "Spotify Mix", "Segoe UI", system-ui, sans-serif; }
+  #ranch-sleep-menu .t { padding: 10px 12px 8px; color: #b3b3b3; font-size: 12px; font-weight: 700; }
+  #ranch-sleep-menu button { display: block; width: 100%; text-align: left; padding: 11px 12px; border: 0; border-radius: 2px;
+    background: none; color: #e6e6e6; cursor: pointer; font: inherit; }
+  #ranch-sleep-menu button:hover { background: #3e3e3e; color: #fff; }
+  #ranch-sleep-menu button.cur { color: #1ed760; }
+`;
+webFrame.insertCSS(BASE_CSS);
+const sheetKeys = {};
+function applyCss() {
+  for (const [key, css] of Object.entries(SHEETS)) {
+    if (cfg[key] && !sheetKeys[key]) sheetKeys[key] = webFrame.insertCSS(css);
+    else if (!cfg[key] && sheetKeys[key]) { webFrame.removeInsertedCSS(sheetKeys[key]); delete sheetKeys[key]; }
+  }
+}
+applyCss();
+
+// ------------------------------------------------------------ clean-up by text (Spotify changes its class names often)
+const text = (el) => (el.textContent || '').trim();
+const hide = (el, why) => {
+  if (!el || el.dataset.ranchHidden === why) return false;
+  el.dataset.ranchHidden = why;
+  el.style.setProperty('display', 'none', 'important');
+  return true;
+};
+const UPSELL_TEXT = /^(Explore Premium|Upgrade|Upgrade to Premium|Get Premium|Try Premium|Install App|Install app|Download app|Get the app|Open app|Open Spotify|Try (1|one|2|3) months? (of Premium )?for .*|Try free for .*)$/i;
+const PODCAST_TEXT = /^(Podcasts|Podcasts & Shows|Audiobooks|Episodes|Shows|Your Episodes|Episodes for you|Popular podcasts|Audiobooks for you|Podcast charts)$/i;
+const counts = {};
+const count = (k) => { counts[k] = (counts[k] || 0) + 1; };
+
+function cleanPage() {
+  if (!document.body) return;
+  if (cfg.hideUpsells) {
+    for (const el of document.querySelectorAll('button, a, [role="button"]')) {
+      if (el.dataset.ranchHidden || el.closest('#ranch-sleep-menu')) continue;
+      const t = text(el);
+      // In the top bar, plain "Premium" and "Download" (the desktop app) are upsells too
+      const topBar = /^(Premium|Download)$/i.test(t) && el.getBoundingClientRect().top < 64;
+      if ((UPSELL_TEXT.test(t) || topBar) && hide(el, 'upsell')) count('upsell');
+    }
+    // Premium pop-ups ("You discovered a Premium feature", "Get 3 months …")
+    for (const d of document.querySelectorAll('[role="dialog"], [aria-modal="true"]')) {
+      if (d.dataset.ranchHidden) continue;
+      const t = text(d);
+      if (/Premium/i.test(t) && /(Try|Get|Upgrade|Explore|Subscribe)/i.test(t) && t.length < 600) {
+        const close = d.querySelector('button[aria-label="Close"], button[aria-label="Dismiss"]');
+        if (close) close.click(); else hide(d, 'upsell');
+        count('upsell-popup');
+      }
+    }
+  }
+  if (cfg.blockAds) {
+    // Sponsored cards and banners carry a small "Sponsored"/"Advertisement" label
+    for (const el of document.querySelectorAll('span, div, p')) {
+      if (el.children.length || el.dataset.ranchSeenLabel) continue;
+      if (!/^(Sponsored|Advertisement|Ad)$/i.test(text(el)) || el.closest('[data-testid="now-playing-widget"], footer, [data-testid="now-playing-bar"]')) continue;
+      el.dataset.ranchSeenLabel = '1';
+      const box = el.closest('section, [data-testid="grid-container"] > div, [role="group"], [data-encore-id="card"]') || el.parentElement;
+      if (box && box !== document.body && box.getBoundingClientRect().height < 700 && hide(box, 'ad')) count('ad');
+    }
+  }
+  if (cfg.hidePodcasts) {
+    // Filter chips at the top of Home and search
+    for (const el of document.querySelectorAll('button, [role="checkbox"], [role="radio"], a')) {
+      if (!el.dataset.ranchHidden && PODCAST_TEXT.test(text(el)) && (el.closest('[role="list"], [role="group"], [data-testid="chip-group"]') || el.getAttribute('role'))) hide(el, 'podcasts');
+    }
+    // Home shelves that are mostly podcasts, episodes or audiobooks
+    for (const sec of document.querySelectorAll('section')) {
+      if (sec.dataset.ranchHidden) continue;
+      const links = [...sec.querySelectorAll('a[href]')].map((a) => a.getAttribute('href') || '');
+      const cards = links.filter((h) => /^\/(album|playlist|artist|track|show|episode|audiobook)\//.test(h));
+      const talk = cards.filter((h) => /^\/(show|episode|audiobook)\//.test(h));
+      if (cards.length >= 3 && talk.length / cards.length > 0.5 && hide(sec, 'podcasts')) count('podcasts');
+    }
+  }
+}
+function unhideAll() {
+  for (const el of document.querySelectorAll('[data-ranch-hidden]')) { delete el.dataset.ranchHidden; el.style.removeProperty('display'); }
+  for (const el of document.querySelectorAll('[data-ranch-seen-label]')) delete el.dataset.ranchSeenLabel;
+}
+let pending = false;
+const schedule = () => { if (!pending) { pending = true; setTimeout(() => { pending = false; cleanPage(); }, 300); } };
+new MutationObserver(schedule).observe(document, { childList: true, subtree: true });
+setInterval(cleanPage, 2000);
+setInterval(() => {
+  if (Object.keys(counts).length) { log(`Hidden so far: ${JSON.stringify(counts)}`); for (const k of Object.keys(counts)) delete counts[k]; }
+}, 5 * 60 * 1000);
+
+// ------------------------------------------------------------ what's playing
+const q = (sel) => document.querySelector(sel);
+const playBtn = () => q('[data-testid="control-button-playpause"]');
+function nowPlaying() {
+  const widget = q('[data-testid="now-playing-widget"]') || q('footer') || document.body;
+  const meta = navigator.mediaSession && navigator.mediaSession.metadata;
+  const domTitle = q('[data-testid="context-item-info-title"]');
+  const domArtist = q('[data-testid="context-item-info-artist"]') || q('[data-testid="context-item-info-subtitles"]');
+  const art = (meta && meta.artwork && meta.artwork.length && meta.artwork[meta.artwork.length - 1].src)
+    || (widget.querySelector('img') || {}).src || '';
+  const label = (playBtn() && playBtn().getAttribute('aria-label')) || '';
+  // An ad: Spotify labels it "Advertisement" in the player and links it to /ad/ or an advertiser
+  const isAd = /Advertisement/i.test(document.title)
+    || !!widget.querySelector('[data-testid="context-item-info-ad-subtitle"], a[href*="/ad/"], a[data-testid="ad-link"]')
+    || /^(Advertisement|Spotify Advertisement)$/i.test(text(domTitle || document.createElement('i')))
+    || /Advertisement/i.test((widget.getAttribute && widget.getAttribute('aria-label')) || '');
+  return {
+    title: (meta && meta.title) || text(domTitle || document.createElement('i')),
+    artist: (meta && meta.artist) || text(domArtist || document.createElement('i')),
+    art,
+    playing: /^(Pause|Pausieren|Pausar|Pause)$/i.test(label) || (navigator.mediaSession && navigator.mediaSession.playbackState === 'playing'),
+    isAd,
+  };
+}
+let lastNow = '';
+function reportNowPlaying() {
+  const n = nowPlaying();
+  const key = JSON.stringify(n);
+  if (key === lastNow) return;
+  lastNow = key;
+  ipcRenderer.send('sp:now-playing', n);
+}
+setInterval(reportNowPlaying, 1000);
+
+// Taskbar buttons and the tray menu press Spotify's own buttons
+const BUTTONS = { prev: 'control-button-skip-back', toggle: 'control-button-playpause', next: 'control-button-skip-forward' };
+ipcRenderer.on('sp:control', (_e, what) => {
+  const b = BUTTONS[what] && q(`[data-testid="${BUTTONS[what]}"]`);
+  if (b && !b.disabled) b.click();
+  setTimeout(reportNowPlaying, 300);
+});
+
+// ------------------------------------------------------------ sleep timer
+// The volume slider is a range input; the fade moves it down, then puts it back after pausing
+function volumeInput() { return q('[data-testid="volume-bar"] input[type="range"]'); }
+function setVolume(input, v) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  setter.call(input, String(v));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+let fade = null;
+ipcRenderer.on('sp:fade-out', (_e, ms) => {
+  const input = volumeInput();
+  if (!input) return;
+  const start = Number(input.value);
+  const max = Number(input.max || 1);
+  fade = { input, start };
+  const t0 = Date.now();
+  const step = () => {
+    if (!fade) return;
+    const k = Math.min(1, (Date.now() - t0) / ms);
+    setVolume(input, Math.max(0, start * (1 - k)));
+    if (k < 1) setTimeout(step, 500);
+  };
+  if (start > 0 && max > 0) step();
+});
+ipcRenderer.on('sp:sleep-now', () => {
+  const b = playBtn();
+  if (b && /^Pause/i.test(b.getAttribute('aria-label') || '')) b.click();
+  if (fade) { const f = fade; fade = null; setTimeout(() => setVolume(f.input, f.start), 800); }
+});
+let sleepState = desktop ? (ipcRenderer.sendSync('sp:sleep-get') || {}) : {};
+ipcRenderer.on('sp:sleep-state', (_e, s) => { sleepState = s || {}; renderButtons(); });
+
+function closeSleepMenu() { const m = document.getElementById('ranch-sleep-menu'); if (m) m.remove(); }
+function openSleepMenu(anchor) {
+  if (document.getElementById('ranch-sleep-menu')) { closeSleepMenu(); return; }
+  const menu = document.createElement('div');
+  menu.id = 'ranch-sleep-menu';
+  const title = document.createElement('div');
+  title.className = 't';
+  title.textContent = 'Sleep timer: pause the music after';
+  menu.appendChild(title);
+  const choices = [[15, '15 minutes'], [30, '30 minutes'], [45, '45 minutes'], [60, '1 hour'], [90, '1 hour 30 minutes'], ['song', 'End of this song'], [0, 'Turn off']];
+  for (const [value, label] of choices) {
+    if (value === 0 && !sleepState.endsAt && !sleepState.endOfSong) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (value === 'song' && sleepState.endOfSong) b.className = 'cur';
+    b.addEventListener('click', () => { ipcRenderer.send('sp:sleep-set', value); closeSleepMenu(); });
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 8}px`;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, r.right - menu.offsetWidth))}px`;
+}
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest || (!e.target.closest('#ranch-sleep-menu') && !e.target.closest('#ranch-sleep-btn'))) closeSleepMenu();
+}, true);
+
+// ------------------------------------------------------------ settings gear, moon, Update button
+const NS = 'http://www.w3.org/2000/svg';
+function icon(d, size) {
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('fill', 'currentColor');
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute('d', d);
+  svg.appendChild(p);
+  return svg;
+}
+const GEAR = 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z';
+const MOON = 'M12.3 2a10 10 0 1 0 9.7 12.4 8 8 0 0 1-9.7-12.4z';
+const DOWNLOAD = 'M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1Zm-7 15a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z';
+let updateState = null;
+function updateLabel(s) {
+  if (!s) return null;
+  if (s.status === 'available') return { text: 'Update', busy: false };
+  if (s.status === 'downloading') return { text: `Updating… ${s.percent || 0}%`, busy: true };
+  if (s.status === 'ready') return { text: 'Restart to update', busy: false };
+  if (s.status === 'error' && s.version) return { text: 'Retry update', busy: false };
+  return null;
+}
+function makeBtn(id, title, onClick) {
+  let b = document.getElementById(id);
+  if (!b) {
+    b = document.createElement('button');
+    b.id = id;
+    b.type = 'button';
+    b.className = 'ranch-top-btn';
+    b.title = title;
+    b.setAttribute('aria-label', title);
+    b.addEventListener('click', onClick);
+  }
+  if (b.parentElement !== document.body) document.body.appendChild(b);
+  return b;
+}
+// Our buttons sit just left of the group of Spotify buttons in the top right corner
+function rightEdge() {
+  const rects = [];
+  for (const el of document.querySelectorAll('button, a')) {
+    if (el.classList.contains('ranch-top-btn') || el.closest('[data-ranch-hidden], form, [role="search"], [data-testid="browse-button"]')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width && r.height && r.top >= 0 && r.top < 64 && r.left > window.innerWidth * 0.45) rects.push(r);
+  }
+  rects.sort((a, b) => b.right - a.right);
+  if (!rects.length) return 16;
+  let left = rects[0].left;
+  for (const r of rects.slice(1)) {
+    if (r.right < left - 72) break; // a bigger gap: the end of the group
+    left = Math.min(left, r.left);
+  }
+  return window.innerWidth - left + 8;
+}
+function renderButtons() {
+  if (!document.body) return;
+  let right = rightEdge();
+  const place = (b) => { b.style.right = `${right}px`; right += b.offsetWidth + 8; };
+
+  const gear = makeBtn('ranch-settings-btn', 'App settings: ads, upsells, podcasts and more (Ctrl+,)', () => ipcRenderer.send('rw:open-settings'));
+  if (!gear.firstChild) gear.appendChild(icon(GEAR, 18));
+  place(gear);
+
+  if (desktop) {
+    const moon = makeBtn('ranch-sleep-btn', 'Sleep timer', (e) => openSleepMenu(e.currentTarget));
+    const left = sleepState.endsAt ? `${Math.max(1, Math.round((sleepState.endsAt - Date.now()) / 60000))}m` : sleepState.endOfSong ? 'song' : '';
+    if (moon.dataset.key !== left) {
+      moon.dataset.key = left;
+      moon.replaceChildren(icon(MOON, 16));
+      if (left) { const s = document.createElement('span'); s.textContent = left; moon.appendChild(s); }
+    }
+    moon.classList.toggle('on', !!left);
+    moon.title = left ? `Sleep timer: ${left === 'song' ? 'pauses at the end of this song' : `pauses in ${left}`}` : 'Sleep timer';
+    place(moon);
+  }
+
+  const want = updateLabel(updateState);
+  let upd = document.getElementById('ranch-update-btn');
+  if (!want) { if (upd) upd.remove(); return; }
+  upd = makeBtn('ranch-update-btn', 'Install the update', () => ipcRenderer.send('tb:update-install'));
+  if (upd.dataset.key !== want.text) {
+    upd.dataset.key = want.text;
+    upd.replaceChildren();
+    if (!want.busy) upd.appendChild(icon(DOWNLOAD, 16));
+    const span = document.createElement('span');
+    span.textContent = want.text;
+    upd.appendChild(span);
+  }
+  upd.disabled = want.busy;
+  place(upd);
+}
+ipcRenderer.on('tb:update', (_e, s) => { updateState = s; renderButtons(); });
+ipcRenderer.invoke('tb:update-get').then((s) => { updateState = s; renderButtons(); }).catch(() => {});
+setInterval(renderButtons, 1000);
+window.addEventListener('resize', renderButtons);
+
+ipcRenderer.on('rw:config', (_e, next) => {
+  cfg = next;
+  applyCss();
+  setCleanLinks(cfg.skipLinkTracking);
+  unhideAll();
+  cleanPage();
+});
