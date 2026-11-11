@@ -1,8 +1,8 @@
 // Everything that makes this app Spotify. The rest of src/ is the shared Ranch web-app core.
-// It's called "Ranch Spotify" so it never clashes with the official Spotify app
-// (its Start Menu shortcut, its %APPDATA%\Spotify folder and its uninstall entry).
+// Its data lives in %APPDATA%\Ranch Spotify, never in the official Spotify app's %APPDATA%\Spotify.
 module.exports = {
-  name: 'Ranch Spotify',
+  name: 'Spotify',
+  dataFolder: 'Ranch Spotify',
   appId: 'local.ranch.spotify',
   repo: 'KingCreeper531/spotify-desktop',
   home: 'https://open.spotify.com/',

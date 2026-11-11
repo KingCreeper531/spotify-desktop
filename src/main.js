@@ -13,6 +13,7 @@ const updater = require('./updater');
 const ENV = (k) => process.env[`${site.envPrefix}_${k}`];
 app.setAppUserModelId(site.appId);
 if (ENV('USER_DATA')) app.setPath('userData', ENV('USER_DATA')); // developer test copies
+else if (site.dataFolder) app.setPath('userData', path.join(app.getPath('appData'), site.dataFolder)); // apart from the official app's files
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 const ICON = path.join(__dirname, '..', 'build', 'icon.png');
@@ -54,7 +55,9 @@ function ensureShortcuts() {
     let current = null;
     try { current = shell.readShortcutLink(lnk); } catch { /* missing */ }
     const ok = current && path.resolve(current.target).toLowerCase() === path.resolve(process.execPath).toLowerCase() && current.appUserModelId === site.appId;
-    if (!ok) {
+    // A shortcut with the same name that opens another installed app (e.g. the official one) is left alone
+    const someoneElses = current && current.appUserModelId !== site.appId && current.target && fs.existsSync(current.target);
+    if (!ok && !someoneElses) {
       try { fs.mkdirSync(path.dirname(lnk), { recursive: true }); shell.writeShortcutLink(lnk, current ? 'replace' : 'create', opts); } catch (e) { log(`Shortcut failed: ${e.message}`); }
     }
   };

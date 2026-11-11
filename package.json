@@ -1,6 +1,6 @@
 {
   "name": "ranch-spotify",
-  "productName": "Ranch Spotify",
+  "productName": "Spotify",
   "version": "1.0.0",
   "description": "Spotify for Windows, Android and iPhone without ads or upsells, with a sleep timer, song notifications and taskbar controls",
   "main": "src/main.js",
@@ -23,7 +23,7 @@
   },
   "build": {
     "appId": "local.ranch.spotify",
-    "productName": "Ranch Spotify",
+    "productName": "Spotify",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -50,12 +50,12 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
-      "artifactName": "Ranch-Spotify-Setup-${version}.${ext}",
+      "artifactName": "Spotify-Setup-${version}.${ext}",
       "oneClick": true,
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Ranch Spotify",
+      "shortcutName": "Spotify",
       "runAfterFinish": true
     },
     "electronVersion": "45.2.1+wvcus",

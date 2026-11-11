@@ -2,7 +2,7 @@ import UIKit
 
 /// Everything that makes this iPhone app Spotify.
 enum Site {
-    static let name = "Ranch Spotify"
+    static let name = "Spotify"
     static let home = URL(string: "https://open.spotify.com/")!
     static let urlScheme = "ranchsp"
     static let repo = "KingCreeper531/spotify-desktop"

@@ -1,8 +1,8 @@
-# Ranch Spotify
+# Spotify (Ranch)
 
 An unofficial Spotify app for Windows, Android and iPhone without ads, part of the Ranch apps. It runs Spotify's own web player and works with free and Premium accounts. Install and update it yourself, or through the [Ranch Launcher](https://github.com/KingCreeper531/ranch-launcher).
 
-It's called Ranch Spotify so it never gets in the way of the official Spotify app: both can be installed side by side.
+It keeps its sign-in and settings in its own folder (`%APPDATA%\Ranch Spotify`), apart from the official Spotify app's files. If you have both installed, the Start Menu's "Spotify" shortcut opens whichever was installed last.
 
 ## Features
 
@@ -24,9 +24,9 @@ It doesn't unlock Premium-only features (like unlimited skips on a free account)
 
 Get the latest release from the [Releases page](https://github.com/KingCreeper531/spotify-desktop/releases/latest):
 
-- `Ranch-Spotify-Setup-x.y.z.exe`: Windows installer. It updates itself. Windows SmartScreen may warn because the app isn't code-signed: click **More info**, then **Run anyway**.
-- `Ranch-Spotify-Android-x.y.z.apk`: Android app (Android 8 or newer). Spotify's phone website only plays previews, so the app opens Spotify's desktop site; pinch to zoom. Open the file on your phone to install; it updates itself.
-- `Ranch-Spotify-iOS-x.y.z.ipa`: iPhone and iPad app. It's unsigned, so install it with [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io) using your Apple ID (a free one works). If Spotify won't play on the iPhone itself, it still works as a remote: pick your PC or speaker from Spotify's device button.
+- `Spotify-Setup-x.y.z.exe`: Windows installer. It updates itself. Windows SmartScreen may warn because the app isn't code-signed: click **More info**, then **Run anyway**.
+- `Spotify-Android-x.y.z.apk`: Android app (Android 8 or newer). Spotify's phone website only plays previews, so the app opens Spotify's desktop site; pinch to zoom. Open the file on your phone to install; it updates itself.
+- `Spotify-iOS-x.y.z.ipa`: iPhone and iPad app. It's unsigned, so install it with [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io) using your Apple ID (a free one works). If Spotify won't play on the iPhone itself, it still works as a remote: pick your PC or speaker from Spotify's device button.
 
 Signing in: use your Spotify email and password, or "Continue with Facebook / Apple". If your account uses "Continue with Google", choose **Log in without password** to get a code by email instead, because Google doesn't allow its sign-in inside apps.
 

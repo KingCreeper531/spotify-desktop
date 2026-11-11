@@ -7,8 +7,8 @@ plugins {
 // ---------------------------------------------------------------- this app
 // Everything that makes this Android app Spotify. The Java code is the shared Ranch web-app shell.
 def site = [
-    name      : 'Ranch Spotify',
-    fileName  : 'Ranch-Spotify',
+    name      : 'Spotify',
+    fileName  : 'Spotify',
     appId     : 'io.github.kingcreeper531.spotify',
     home      : 'https://open.spotify.com/',
     hosts     : 'spotify.com,scdn.co,spotifycdn.com,facebook.com,apple.com',

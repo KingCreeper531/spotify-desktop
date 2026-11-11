@@ -1,8 +1,8 @@
-# Builds the Ranch Spotify app and publishes a GitHub release with:
-#   - Ranch-Spotify-Setup-<version>.exe (Windows installer, updates itself)
-#   - Ranch-Spotify-Android-<version>.apk
+# Builds the Spotify app and publishes a GitHub release with:
+#   - Spotify-Setup-<version>.exe       (Windows installer, updates itself)
+#   - Spotify-Android-<version>.apk
 #   - latest.yml + .blockmap           (used by the in-app Update button)
-#   - Ranch-Spotify-iOS-<version>.ipa   (added a few minutes later by GitHub's Mac build, .github/workflows/ios.yml)
+#   - Spotify-iOS-<version>.ipa         (added a few minutes later by GitHub's Mac build, .github/workflows/ios.yml)
 #
 # Usage:  npm run release                      -> bumps patch (1.0.0 -> 1.0.1) if this version is already out
 #         npm run release -- -Bump minor       -> 1.0.0 -> 1.1.0
@@ -20,8 +20,8 @@ function Run($exe, [string[]]$argv) {
   if ($LASTEXITCODE -ne 0) { throw "$exe $($argv -join ' ') failed (exit $LASTEXITCODE)" }
 }
 
-$name = 'Ranch Spotify'
-$file = 'Ranch-Spotify'   # file names have no spaces
+$name = 'Spotify'
+$file = 'Spotify'
 $repo = 'KingCreeper531/spotify-desktop'
 
 $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
