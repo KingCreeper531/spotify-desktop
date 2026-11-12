@@ -6,6 +6,13 @@ enum AdBlocker {
         "doubleclick.net", "googlesyndication.com", "googleadservices.com", "googletagservices.com",
         "google-analytics.com", "googletagmanager.com", "adservice.google.com", "imasdk.googleapis.com",
         "ads-twitter.com", "ads-api.twitter.com", "static.ads-twitter.com", "analytics.twitter.com",
+        "adeventtracker.spotify.com", "ads-fa.spotify.com", "adstudio-assets.spotify.com",
+    ]
+    /// Spotify's ad requests (and its listening analytics) on its API servers
+    private static let urlPatterns = [
+        "^https?://[^/]*spclient[^/]*[.]spotify[.]com/ads/",
+        "^https?://[^/]*spclient[^/]*[.]spotify[.]com/ad-logic/",
+        "^https?://[^/]*spclient[^/]*[.]spotify[.]com/gabo-receiver-service/",
     ]
 
     private static func rulesJSON() -> String {
@@ -14,6 +21,9 @@ enum AdBlocker {
             let escaped = host.replacingOccurrences(of: ".", with: "\\.")
             rules.append(["trigger": ["url-filter": "^https?://([^/]+\\.)?\(escaped)/"], "action": ["type": "block"]])
         }
+        for pattern in urlPatterns {
+            rules.append(["trigger": ["url-filter": pattern], "action": ["type": "block"]])
+        }
         let data = (try? JSONSerialization.data(withJSONObject: rules)) ?? Data("[]".utf8)
         return String(data: data, encoding: .utf8) ?? "[]"
     }
@@ -21,7 +31,7 @@ enum AdBlocker {
     /// Compiles the rules (cached by iOS after the first launch) and adds them; then calls `done`.
     static func install(into content: WKUserContentController, done: @escaping () -> Void) {
         guard let store = WKContentRuleListStore.default() else { return done() }
-        store.compileContentRuleList(forIdentifier: "ranch-ad-servers-v1", encodedContentRuleList: rulesJSON()) { list, _ in
+        store.compileContentRuleList(forIdentifier: "ranch-ad-servers-v2", encodedContentRuleList: rulesJSON()) { list, _ in
             DispatchQueue.main.async {
                 if let list { content.add(list) }
                 done()

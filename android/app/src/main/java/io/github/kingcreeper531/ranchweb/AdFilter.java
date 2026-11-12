@@ -16,6 +16,16 @@ final class AdFilter {
             "ads-twitter.com",
             "ads-api.twitter.com",
             "analytics.twitter.com",
+            "adeventtracker.spotify.com",
+            "ads-fa.spotify.com",
+            "adstudio-assets.spotify.com",
+    };
+
+    // Spotify's ad requests (and its listening analytics) on its API servers (spclient.wg.spotify.com, gew1-spclient.spotify.com, …)
+    private static final String[] SPOTIFY_PATHS = {
+            "/ads/",
+            "/ad-logic/",
+            "/gabo-receiver-service/",
     };
 
     private static final String[] YOUTUBE_PATHS = {
@@ -33,6 +43,12 @@ final class AdFilter {
         if (host == null) return false;
         for (String h : HOSTS) {
             if (host.equals(h) || host.endsWith("." + h)) return true;
+        }
+        if (host.endsWith("spotify.com") && host.contains("spclient")) {
+            String path = uri.getPath();
+            if (path != null) {
+                for (String p : SPOTIFY_PATHS) if (path.startsWith(p)) return true;
+            }
         }
         if (host.endsWith("youtube.com")) {
             String path = uri.getPath();

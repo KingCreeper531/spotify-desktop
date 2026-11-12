@@ -48,6 +48,22 @@
           try { const u = new URL(url); ['si', 'utm_source', 'utm_medium', 'utm_campaign', 'nd', 'context'].forEach((k) => u.searchParams.delete(k)); return u.toString(); } catch { return url; }
         }));
       window.__ranchCleanLinks = true;
+      // Spotify's player elements, so an ad that gets through can be silenced on every platform
+      const media = new Set();
+      let adMute = false;
+      const origPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function play(...args) {
+        media.add(this);
+        if (adMute && !this.__ranchMuted) { this.__ranchWasMuted = this.muted; this.muted = true; this.__ranchMuted = true; }
+        return origPlay.apply(this, args);
+      };
+      window.__ranchSetAdMute = (on) => {
+        adMute = !!on;
+        for (const el of new Set([...media, ...document.querySelectorAll('audio, video')])) {
+          if (on && !el.__ranchMuted) { el.__ranchWasMuted = el.muted; el.muted = true; el.__ranchMuted = true; }
+          else if (!on && el.__ranchMuted) { el.muted = !!el.__ranchWasMuted; el.__ranchMuted = false; }
+        }
+      };
       if (window.Clipboard && Clipboard.prototype.writeText) {
         const orig = Clipboard.prototype.writeText;
         Clipboard.prototype.writeText = function writeText(t) { return orig.call(this, clean(t)); };
@@ -176,6 +192,39 @@
   // ------------------------------------------------------------ what's playing
   const q = (sel) => document.querySelector(sel);
   const playBtn = () => q('[data-testid="control-button-playpause"]');
+  // The player bar along the bottom (now-playing info, controls and progress)
+  const playerBar = () => q('[data-testid="now-playing-bar"]') || q('footer') || q('[data-testid="now-playing-widget"]');
+  // Spotify's own "Advertisement" / "Sponsored" label anywhere in the player bar
+  function adLabelInPlayer() {
+    const bar = playerBar();
+    if (!bar) return false;
+    for (const el of bar.querySelectorAll('span, a, div, p')) {
+      if (!el.children.length && /^(Advertisement|Sponsored|Ad|Ad ·.*|Advertisement ·.*)$/i.test(text(el))) return true;
+    }
+    return false;
+  }
+  const toSeconds = (t) => { const m = /^(\d+):(\d\d)$/.exec((t || '').trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; };
+  const MUSIC_LINK = /^(https:\/\/open\.spotify\.com)?\/(track|album|episode|chapter|show|artist|playlist|audiobook|user|local)\b/;
+  // Ads are short and their title doesn't link to a song, album or episode
+  let lastShortLog = '';
+  function shortWithoutMusicLink(widget) {
+    const duration = toSeconds((q('[data-testid="playback-duration"]') || {}).textContent);
+    if (!duration || duration > 70) return false;
+    const title = text(q('[data-testid="context-item-info-title"]') || widget);
+    if (!title) return false;
+    const links = [...widget.querySelectorAll('a[href]')].map((a) => a.getAttribute('href') || '');
+    if (links.some((h) => MUSIC_LINK.test(h))) {
+      return false;
+    }
+    // Note what the player showed, so a missed ad can be recognised next time (app.log)
+    const key = `${title}|${duration}`;
+    if (key !== lastShortLog) {
+      lastShortLog = key;
+      const meta = navigator.mediaSession && navigator.mediaSession.metadata;
+      log(`Short clip without a song link, treated as an ad: ${JSON.stringify({ title: title.slice(0, 80), duration, links: links.slice(0, 4).map((h) => h.slice(0, 80)), metaTitle: meta && meta.title, metaArtist: meta && meta.artist, docTitle: document.title.slice(0, 80) })}`);
+    }
+    return true;
+  }
   function nowPlaying() {
     const widget = q('[data-testid="now-playing-widget"]') || q('footer') || document.body;
     const meta = navigator.mediaSession && navigator.mediaSession.metadata;
@@ -186,9 +235,12 @@
     const label = (playBtn() && playBtn().getAttribute('aria-label')) || '';
     // An ad: Spotify labels it "Advertisement" in the player and links it to /ad/ or an advertiser
     const isAd = /Advertisement/i.test(document.title)
+      || !!(meta && (/^Advertisement$/i.test(meta.title || '') || (/^Spotify$/i.test(meta.artist || '') && !/^Spotify$/i.test(meta.title || ''))))
       || !!widget.querySelector('[data-testid="context-item-info-ad-subtitle"], a[href*="/ad/"], a[data-testid="ad-link"]')
       || /^(Advertisement|Spotify Advertisement)$/i.test(text(domTitle || document.createElement('i')))
-      || /Advertisement/i.test((widget.getAttribute && widget.getAttribute('aria-label')) || '');
+      || /Advertisement/i.test((widget.getAttribute && widget.getAttribute('aria-label')) || '')
+      || adLabelInPlayer()
+      || shortWithoutMusicLink(widget);
     return {
       title: (meta && meta.title) || text(domTitle || document.createElement('i')),
       artist: (meta && meta.artist) || text(domArtist || document.createElement('i')),
@@ -198,8 +250,17 @@
     };
   }
   let lastNow = '';
+  let pageMuted = false;
+  function pageAdMute(on) {
+    if (on === pageMuted) return;
+    pageMuted = on;
+    if (on) log('Muted an ad');
+    if (desktop) webFrame.executeJavaScript(`window.__ranchSetAdMute && window.__ranchSetAdMute(${on ? 'true' : 'false'})`).catch(() => {});
+    else if (window.__ranchSetAdMute) window.__ranchSetAdMute(on);
+  }
   function reportNowPlaying() {
     const n = nowPlaying();
+    pageAdMute(n.isAd && !!cfg.muteAds);
     const key = JSON.stringify(n);
     if (key === lastNow) return;
     lastNow = key;
