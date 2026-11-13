@@ -1,7 +1,7 @@
 {
   "name": "ranch-spotify",
   "productName": "Spotify",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Spotify for Windows, Android and iPhone without ads or upsells, with a sleep timer, song notifications and taskbar controls",
   "main": "src/main.js",
   "author": "KingCreeper531",
